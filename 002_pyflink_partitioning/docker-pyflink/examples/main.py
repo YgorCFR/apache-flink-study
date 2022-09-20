@@ -30,15 +30,16 @@ def create_table_input(input_table: str, input_stream: str, broker: str):
     CREATE TABLE {input_table} (
         `customer` VARCHAR,
         `transaction_type` VARCHAR,
-        `online_payment_amount` VARCHAR, 
-        `in_store_payment_amount` VARCHAR, 
-        `lat` VARCHAR, 
-        `lon` VARCHAR, 
-        `transaction_datetime` VARCHAR
+        `online_payment_amount` DOUBLE, 
+        `in_store_payment_amount` DOUBLE, 
+        `lat` DOUBLE, 
+        `lon` DOUBLE, 
+        `transaction_datetime` TIMESTAMP_LTZ
     ) WITH (
         'connector' = 'kafka',
         'topic' = '{input_stream}',
         'properties.bootstrap.servers' = '{broker}',
+        'json.timestamp-format.standard' = 'ISO-8601',
         'properties.group.id' = 'testGroup',
         'format' = 'json',
         'scan.startup.mode' = 'latest-offset'
@@ -48,7 +49,13 @@ def create_table_output_s3(table_name, stream_name):
     return f"""
     CREATE TABLE {table_name} (
         `customer` VARCHAR,
-        `transaction_type` VARCHAR
+        `transaction_type` VARCHAR,
+        `transaction_datetime` TIMESTAMP_LTZ,
+        `year_rec` BIGINT, 
+        `month_rec` BIGINT,
+        `day_rec` BIGINT 
+    ) PARTITIONED BY (
+        year_rec, month_rec, day_rec 
     ) WITH (
         'connector' = 'filesystem',
         'path' = 'file:///home/ygor/output/',
@@ -80,7 +87,14 @@ def insert_stream_s3_2_phase(insert_from, insert_into):
     """
 
 def insert_stream_s3(insert_from, insert_into):
-    return f"""INSERT INTO {insert_into} SELECT customer, transaction_type FROM {insert_from}"""
+    return f"""INSERT INTO {insert_into} 
+               SELECT customer, 
+                      transaction_type,
+                      transaction_datetime, 
+                      YEAR(transaction_datetime) as year_rec,
+                      MONTH(transaction_datetime) as month_rec,
+                      DAYOFMONTH(transaction_datetime) as day_rec  
+               FROM {insert_from}"""
 
 def main():
 
@@ -92,11 +106,8 @@ def main():
 
     table_env.execute_sql(create_table_input(input_table, input_stream, broker))
     table_env.execute_sql(create_table_output_s3(output_table, input_stream))
-    table_env.execute_sql(create_table_2_phase("transactions_phase_2", None))
 
     statement_set.add_insert_sql(insert_stream_s3(input_table, output_table))
-
-    statement_set.add_insert_sql(insert_stream_s3_2_phase(output_table, "transactions_phase_2"))
 
     statement_set.execute()
 
