@@ -42,3 +42,42 @@ Repositório dedicado aos estudos de apache-flink
    ```
    10. Será possível ver os resultados em `~/output/`.
    > Você pode configurar o output na linha 53 do script main.py. 
+
+## 002_pyflink_partitioning
+ - Particionamento de tabelas, como salvar as tabelas no Apache Flink particionando-as.
+ - Foi alterado o cenário de ingestão onde as colunas passaram a receber um tipo de dado em específico:
+ ```python
+ def create_table_output_s3(table_name, stream_name):
+    return f"""
+    CREATE TABLE {table_name} (
+        `customer` VARCHAR,
+        `transaction_type` VARCHAR,
+        `transaction_datetime` TIMESTAMP_LTZ,
+        `year_rec` BIGINT, 
+        `month_rec` BIGINT,
+        `day_rec` BIGINT 
+    ) PARTITIONED BY (
+        year_rec, month_rec, day_rec 
+    ) WITH (
+        'connector' = 'filesystem',
+        'path' = 'file:///home/<<USER>>/output/',
+        'format' = 'json',
+        'sink.partition-commit.policy.kind'='success-file',
+        'sink.partition-commit.delay' = '1 min'
+    )
+    """
+ ```
+ - Na escrita as partições foram criadas para atender o requisito:
+ ```python
+ def insert_stream_s3(insert_from, insert_into):
+    return f"""INSERT INTO {insert_into} 
+               SELECT customer, 
+                      transaction_type,
+                      transaction_datetime, 
+                      YEAR(transaction_datetime) as year_rec,
+                      MONTH(transaction_datetime) as month_rec,
+                      DAYOFMONTH(transaction_datetime) as day_rec  
+               FROM {insert_from}"""
+ ```
+ - O cenário final gerou um diagrama desse formato:
+ ![Partitioning diagram](./images/Screenshot%20from%202022-09-19%2022-54-13.png)
