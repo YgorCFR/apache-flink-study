@@ -81,3 +81,58 @@ Repositório dedicado aos estudos de apache-flink
  ```
  - O cenário final gerou um diagrama desse formato:
  ![Partitioning diagram](./images/Screenshot%20from%202022-09-19%2022-54-13.png)
+
+ ## 003_pyflink_aggregation
+  - Inserido o tipo de agregação à tabela de transações.
+  - Foi utilizada a categoria de agregação TUMBLE.
+  - A função de TUMBLE, assinala as linhas À janelas de agregação de tempo não fixadas. Essas janelas não se sobrepõem. 
+  - Em uma agregação utilizando GROUP BY na API de Tabelas do Flink torna-se possível realizar uma agregação por janela de tempo vindo a necessidade do uso da função TUMBLE.
+  - Ao se realizar essa escolha, é necessário definir qual será coluna que conduzirá essas agregações. A coluna que está exposta à função de TUMBLE deve ser do tipo TIMESTAMP(3) ou TIMESTAMP_LTZ(3).
+  - Além disso essa coluna deve estar sob a configuração de WATERMARK na sua origem, ou seja, no CREATE TABLE de comunicação com o source origem. 
+  - A função de WATERMARK permite o uso de uma coluna de referência no dataset para que esta seja utilizada no sistema de streaming como definidora da linha do tempo.
+  - A alteração necessária para inserir o WATERMARK deu-se na query a seguir:
+  ```python
+  def create_table_input(input_table: str, input_stream: str, broker: str):
+    return f"""
+    CREATE TABLE {input_table} (
+        `customer` VARCHAR,
+        `transaction_type` VARCHAR,
+        `online_payment_amount` DOUBLE, 
+        `in_store_payment_amount` DOUBLE, 
+        `lat` DOUBLE, 
+        `lon` DOUBLE, 
+        `transaction_datetime` TIMESTAMP_LTZ(3),
+        WATERMARK FOR transaction_datetime AS transaction_datetime - INTERVAL '5' SECOND
+    ) WITH (
+        'connector' = 'kafka',
+        'topic' = '{input_stream}',
+        'properties.bootstrap.servers' = '{broker}',
+        'json.timestamp-format.standard' = 'ISO-8601',
+        'properties.group.id' = 'testGroup',
+        'format' = 'json',
+        'scan.startup.mode' = 'latest-offset'
+    )
+    """
+  ```
+  - A query de agrupamento deve ser feita de modo que a prioridade seja sempre primeiro a função de agregação e depois a customização das demais colunas.
+  ```python
+  def insert_stream_s3_grouped(insert_from, insert_into):
+    return f"""INSERT INTO {insert_into} 
+               SELECT qry.customer, 
+                      qry.start_event_time as transaction_datetime,
+                      qry.transactions_qtde, 
+                      YEAR(qry.start_event_time) as year_rec, 
+                      MONTH(qry.start_event_time) as month_rec, 
+                      DAYOFMONTH(qry.start_event_time) as day_rec  
+               FROM (   
+                    SELECT  customer, 
+                            transaction_type,
+                            TUMBLE_START(transaction_datetime, INTERVAL '60' SECOND ) as start_event_time,  
+                            COUNT(*) as transactions_qtde 
+                    FROM {insert_from}
+                    GROUP BY TUMBLE(transaction_datetime, INTERVAL '60' SECOND ), customer, transaction_type  
+               ) qry 
+  """
+  ```
+  - O resultado final gerou o seguinte esquema:
+  ![Tumbling Aggregation Diagram](./images/Screenshot%20from%202022-09-21%2015-27-13.png)
